@@ -300,24 +300,36 @@ done
 - No rate limiting enables automated attacks
 - Multiple vulnerabilities compound the risk
 """
+WINDOW = 30.0; MAX_TRIES = 5
+LOGIN_TRIES = {}
+
+def throttle(ip):
+    now = time.time()
+    tries = [t for t in LOGIN_TRIES.get(ip, []) if now - t <= WINDOW]
+    if len(tries) >= MAX_TRIES:
+        return True  # Block this IP
+    tries.append(now)
+    LOGIN_TRIES[ip] = tries
+    return False
+
 @app.post("/auth/login")
-def auth_login():
-    # ❌ BAD: md5/sha256 of password without salt, no rate limit
+def login():
+    ip = request.headers.get("X-Forwarded-For", request.remote_addr or "0.0.0.0")
+    if throttle(ip):
+        return err("too_many_attempts", 429)
+    
+    # Get credentials
     username = request.form.get("username", "")
-    password = request.form.get("password", "").encode()
-    # ❌ BAD: Using broken cryptographic algorithms
-    pw_md5 = hashlib.md5(password).hexdigest()  # MD5 is broken!
-    pw_sha = hashlib.sha256(password).hexdigest()  # No salt!
-    conn = sqlite3.connect(DB)
-    cur = conn.cursor()
-    # ❌ BAD: SQL injection via string formatting
-    row = cur.execute("SELECT id,username,password_hash,is_admin FROM users WHERE username='%s'" % username).fetchone()  # SQLi risk
-    conn.close()
-    if not row: return err("invalid", 401)
-    # ❌ BAD: No rate limiting - allows unlimited brute force attempts
-    if row[2] in (pw_md5, pw_sha):
-        return ok({"msg": "logged in (insecure)"})
-    return err("invalid", 401)
+    password = request.form.get("password", "")
+    
+    # Query user securely
+    row = cur.execute("SELECT id,pwd_salt,pwd_hash,is_admin FROM users WHERE username=?", (username,)).fetchone()
+    
+    # Verify password with timing-safe comparison
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 200_000)
+    if not hmac.compare_digest(dk, stored):
+        return err("invalid", 401)
+
 
 
 # ===================================================================================
