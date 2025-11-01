@@ -7,7 +7,7 @@
 #   python app_bad.py
 # Open: http://127.0.0.1:5000/
 # ------------------------------------------------------------
-from flask import Flask, request, jsonify, redirect, make_response
+from flask import Flask, request, jsonify, redirect, make_response, session
 from pathlib import Path
 import os, subprocess, sqlite3, pickle, base64, logging, urllib.request
 import hashlib, hmac, time, struct
@@ -156,9 +156,19 @@ def inputs_trust():
     """
     # ❌ BAD: trust 'role' from client
     # The application takes the role directly from URL parameters without any verification
-    role = request.args.get("role", "user")
+    # role = request.args.get("role", "user")
+    # if role == "admin":
+    #     return ok({"panel": "admin"})
+
+    #chekcig if the user is logged in
+    if not session.get("user_id"): #agar false hai to user nhi h which means not(false)==true hence error
+        return err("Not Logged in",401);
+    role = session.get("role","user")
     if role == "admin":
         return ok({"panel": "admin"})
+
+
+    
     return ok({"panel": "user"})
 
 
