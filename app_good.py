@@ -212,11 +212,22 @@ curl "http://localhost:5000/auth/idor?id=1%20UNION%20SELECT%20password_hash,user
 @app.get("/auth/idor")
 def idor():
     # ❌ BAD: no ownership check
-    user_id = request.args.get("id", "1")
+    user_id = request.args.get("id")
+    if not user_id or not user__id.isdigit():
+        return err("not authorized", 401)
+    requested_id = int(user_id)
+    is_admin = bool(session.get("is_admin"))
+    current_id = int(session.get("user_id"))
+    if not (is_admin or (current_id == requested_id)):
+        app.logger.warning (f"an unauthorized entity with id= {current_id} and an IP = {request.remote_addr} requested info  about id= {requested_id}")
+        return err("Not Found", 404)
+    
+    
+
+        
     conn = sqlite3.connect(DB)
     cur = conn.cursor()
-    # ❌ DOUBLE BAD: SQL injection via string formatting + no authorization check
-    row = cur.execute(f"SELECT id,username,is_admin FROM users WHERE id={user_id}").fetchone()  # concat
+    row = cur.execute("SELECT id,username,is_admin FROM users WHERE id=?", (int(user_id),)).fetchone()  # concat
     conn.close()
     if not row: return err("not_found", 404)
     return ok({"id": row[0], "username": row[1], "is_admin": row[2]})
