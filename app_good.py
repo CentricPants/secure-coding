@@ -458,12 +458,19 @@ curl "http://localhost:5000/math/overflow?x=4294967295&y=2"
 """
 @app.get("/math/overflow")
 def int_overflow():
-    x = int(request.args.get("x", "0"))
-    y = int(request.args.get("y", "0"))
-    # ❌ BAD: assume 32-bit and wrap silently
-    # This can cause unexpected behavior and security issues
-    res = (x + y) & 0xFFFFFFFF  # Wraps around at 32-bit boundary
-    return ok({"sum_32bit_wrapped": res})
+   try:
+        x = int(request.args.get("x", "0"))
+        y = int(request.args.get("y", "0"))
+    except ValueError:
+        return err("invalid_int", 400)
+    
+    # Explicitly bound to 32-bit unsigned
+    if not (0 <= x <= 0xFFFFFFFF and 0 <= y <= 0xFFFFFFFF):
+        return err("out_of_range", 400)
+    
+    res = x + y
+    if res > 0xFFFFFFFF:  # detect overflow before wrapping
+        return err("overflow", 400)
 
 
 # ===================================================================================
