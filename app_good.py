@@ -8,6 +8,7 @@
 # Open: http://127.0.0.1:5000/
 # ------------------------------------------------------------
 from flask import Flask, request, jsonify, redirect, make_response, session
+from cryptography.fernet import Fernet 
 from pathlib import Path
 import os, subprocess, sqlite3, pickle, base64, logging, urllib.request
 import hashlib, hmac, time, struct
@@ -270,12 +271,15 @@ curl "http://localhost:5000/crypto/plaintext"
 - No encryption means data is readable to anyone who accesses it
 - Violates data protection principles and compliance requirements
 """
+key = Fernet.generate_key()
+f = Fernet(key)
+
 @app.get("/crypto/plaintext")
 def crypto_plaintext():
-    # ❌ BAD: transmit secret in plaintext (simulation)
-    # This exposes highly sensitive PII without any protection
+   
     secret = "user_ssn=123-45-6789"
-    resp = make_response(secret, 200)  # no TLS here, just a string
+    encrypted_secret = f.encrypt(secret)
+    resp = make_response(encrypted_secret, 200)  # no TLS here, just a string
     return resp
 
 
@@ -396,6 +400,10 @@ def crypto_md5_login():
     # ❌ CRITICAL: MD5 is cryptographically broken!
     digest = hashlib.md5(password).hexdigest()
     return ok({"note": "never use MD5 for passwords", "username": username, "hash": digest})
+
+
+
+
 
 
 # ===================================================================================
