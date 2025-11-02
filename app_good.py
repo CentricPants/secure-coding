@@ -15,6 +15,7 @@ import hashlib, hmac, time, struct
 from urllib.parse import urlparse 
 import binascii
 from xml.etree import ElementTree as ET  
+from markupsafe import escape
 # XXE unsafe in some parsers; stdlib is still used here for demo
 # Note: Real XXE typically requires parsers that load external entities (e.g., lxml without defenses).
 # We keep a simplistic "bad" parse to illustrate unsafe parsing of untrusted XML.
@@ -619,11 +620,23 @@ curl "http://localhost:5000/redirect?next=http://evil.com/fake-login"
 - Bypasses user security awareness about suspicious domains
 - Often used in sophisticated phishing campaigns
 """
+ALLOWED_DOMAINS = {"example.com", "trusted.corp"}  
 @app.get("/redirect")
 def open_redirect():
-    nxt = request.args.get("next", "/")
-    # ❌ BAD: no validation - redirects to any URL
-    return redirect(nxt)  # Dangerous: allows redirect to evil.com!
+    nxt = request.args.get("next", "/").strip()
+    parse= urlparsed(nxt)
+
+    if not parse.netloc and not parse.scheme:
+        if parse.startwith("/") and not parse.startwith("//"):
+            return redirect(nxt)
+
+    domain = parse.hostname or ""
+
+    if domain in ALLOWED_DOMAINS and parse.scheme in ("http","https"):
+        return redirect(nxt)
+        
+        
+    return redirect("/")  # Dangerous: allows redirect to evil.com!
 
 
 # ===================================================================================
@@ -668,9 +681,10 @@ curl "http://localhost:5000/xss?msg=<script>document.location='http://evil.com/s
 @app.get("/xss")
 def xss():
     msg = request.args.get("msg", "hello")
-    # ❌ BAD: reflect unescaped content directly into HTML
+    #  reflect unescaped content directly into HTML
+    safe = escape(msg)
     # This allows script injection and execution in browsers
-    return f"<h1>{msg}</h1>"  # Direct injection point!
+    return f"<h1>{safe}</h1>"  # Direct injection point!
 
 
 # ===================================================================================
