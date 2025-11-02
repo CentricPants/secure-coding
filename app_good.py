@@ -727,13 +727,42 @@ EXAMPLE ATTACK:
 - Browser automatically includes cookies
 - No way to distinguish legitimate from forged requests
 """
+def ensure_crsf_token():
+    if "csrf_token" not in session:
+        session['csrf_token'] = secret.token.urlsafe(32)
+        
+@app.get("/csrf/token")
+def get_csrf_token():
+    """
+    Minimal helper to retrieve the CSRF token for the current session.
+    Client (page JS) can fetch this and include it in POSTs.
+    """
+    ensure_csrf_token()
+    return ok({"csrf_token": session["csrf_token"]})
+
+
+
 @app.post("/bank/transfer")
 def bank_transfer():
     # ❌ BAD: no CSRF defense (cookie-based session assumed)
     # This allows attackers to forge requests from authenticated users
+
+    if "csrf_token" not in session:
+        return err({"error": "missing csrf token in session; fetch /csrf/token first"}, 403)
+
+    provided = request.form.get("csrf_token") 
+
+    if not provided or provided != session.get("csrf_token")
+        return err("the token is wrong ",400)
+
+    
     to = request.form.get("to", "acctX")
     amt = request.form.get("amount", "0")
+    
     # No verification that request came from legitimate source!
+
+
+    
     return ok({"transferred": amt, "to": to})
 
 
@@ -776,15 +805,46 @@ curl -X POST -F "file=@shell.php" http://localhost:5000/upload
 - Files may be accessible via web for execution
 """
 UPLOAD_DIR = Path("./uploads_bad"); UPLOAD_DIR.mkdir(exist_ok=True)
+ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "txt", "pdf"}
+MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
+
 @app.post("/upload")
 def upload():
     # ❌ BAD: no extension/size/content checks; saves with user-supplied name
     f = request.files.get("file")
+    
     if not f: return err("no_file", 400)
-    # ❌ CRITICAL: Path traversal vulnerability with user-controlled filename
-    dst = UPLOAD_DIR / f.filename  # path traversal possible with ".."
-    f.save(dst)  # No validation of file type, size, or content!
+
+    filenmae= secure_filename(f.filename or "")
+    
+    if not filename:
+        return err("invalid_filename", 400)
+
+    # Extension allow-list
+
+    ext = filename.rsplit(".",1)[-1].lower() if "." in filename else ""
+    
+    
+    if ext not in ALLOWED_EXTENSIONS:
+        return err("file_type_not_allowed", 400)
+
+    data = f.read(MAX_FILE_SIZE + 1)
+    if len(data) == 0:
+        return err("empty_file", 400)
+    if len(data) > MAX_FILE_SIZE:
+        return err("file_too_large", 413)
+
+
+    
+   if not str(dst).startswith(str(UPLOAD_DIR.resolve()) + os.sep):
+        return err("invalid_path", 400)
+
+    # Write the validated bytes to disk
+    with open(dst, "wb") as out:
+        out.write(data)
+
     return ok({"saved": str(dst)})
+
 
 
 # ===================================================================================
@@ -990,13 +1050,18 @@ curl "http://localhost:5000/users/find?name=' UNION SELECT name,sql,1 FROM sqlit
 @app.get("/users/find")
 def users_find():
     name = request.args.get("name", "")
-    conn = sqlite3.connect(DB)
-    cur = conn.cursor()
-    # ❌ CRITICAL: string formatting allows SQL injection
-    q = f"SELECT id,username,is_admin FROM users WHERE username LIKE '%{name}%'"
-    rows = cur.execute(q).fetchall()  # Executes attacker-controlled SQL!
-    conn.close()
-    return ok({"query": q, "rows": rows})
+    
+    q = f"SELECT id,username,is_admin FROM users WHERE username LIKE ?"
+    pattern =f"%{name}%"
+
+    with sqlite3.connect(DB) as conn
+        cur = conn.cursor()
+        rows = cur.execute(q, (pattern,)).fetchall()  # Executes attacker-controlled SQL!
+        cols = [c[0] for c in cur.description]
+        conn.close()
+    results = [dict(zip (cols, row) )for row in rows ]
+
+    return ok({"rows": results})
 
 
 # ===================================================================================
